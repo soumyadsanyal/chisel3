@@ -139,6 +139,9 @@ package object chisel3 {    // scalastyle:ignore package.object.name
   object Bool extends BoolFactory
   val Mux = chisel3.core.Mux
 
+  type Analog = chisel3.core.Analog
+  val Analog = chisel3.core.Analog
+
   type BlackBox = chisel3.core.BlackBox
 
   val Mem = chisel3.core.Mem

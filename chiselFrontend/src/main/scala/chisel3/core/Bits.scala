@@ -987,3 +987,18 @@ object FixedPoint {
   }
 
 }
+
+/** Data type for Verilog inout */
+final class Analog private (width: Width) extends Element(width) {
+  require(width.known, "Since Analog is only for use in BlackBoxes, width must be known")
+
+  private[core] override def cloneTypeWidth(w: Width): this.type =
+    new Analog(w).asInstanceOf[this.type]
+  private[chisel3] def toType = s"Analog$width"
+  def cloneType: this.type = cloneTypeWidth(width)
+  private[chisel3] def flatten: IndexedSeq[Bits] = ??? // What does this mean?
+  final def toPrintable: Printable = PString("Analog")
+}
+object Analog {
+  def apply(width: Width): Analog = new Analog(width)
+}

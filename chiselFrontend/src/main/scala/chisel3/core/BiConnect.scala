@@ -3,7 +3,8 @@
 package chisel3.core
 
 import chisel3.internal.Builder.pushCommand
-import chisel3.internal.firrtl.Connect
+import chisel3.internal.firrtl.{Attach, Connect}
+import chisel3.internal.throwException
 import scala.language.experimental.macros
 import chisel3.internal.sourceinfo._
 
@@ -52,6 +53,9 @@ object BiConnect {
   def connect(sourceInfo: SourceInfo, connectCompileOptions: CompileOptions, left: Data, right: Data, context_mod: Module): Unit =
     (left, right) match {
       // Handle element case (root case)
+      case (left_a: Analog, right_a: Analog) => {
+        analogAttach(sourceInfo, left_a, right_a, context_mod)
+      }
       case (left_e: Element, right_e: Element) => {
         elemConnect(sourceInfo, connectCompileOptions, left_e, right_e, context_mod)
         // TODO(twigg): Verify the element-level classes are connectable
@@ -233,6 +237,75 @@ object BiConnect {
 
     // Not quite sure where left and right are compared to current module
     // so just error out
+    else throw UnknownRelationException
+  }
+
+  // Issue attach for Analog types
+  private def issueAttach(source: Element, exprs: Seq[Analog])(implicit sourceInfo: SourceInfo): Unit = {
+    pushCommand(Attach(sourceInfo, source.lref, exprs.map(_.ref)))
+  }
+
+  // This function checks if analog element-level attaching is allowed
+  // Then it either issues it or throws the appropriate exception.
+  def analogAttach(implicit sourceInfo: SourceInfo, left: Analog, right: Analog, context_mod: Module): Unit = {
+    // TODO check widths?
+
+    // Analogs can only be stitched up, thus they cannot be literals and must be bound to a Module
+    val leftMod: Module  = left.binding.location.getOrElse(
+      throwException(s"Cannot determine Module containing Left!"))
+    val rightMod: Module = right.binding.location.getOrElse(
+      throwException(s"Cannot determine Module containing Right!"))
+
+    println(s"Attach analog $left:${left.binding.direction} and $right:${right.binding.direction}")
+
+    // CASE: Context is same module as left node and right node is in a child module
+    if ((leftMod == context_mod) &&
+        (rightMod._parent.map(_ == context_mod).getOrElse(false))) {
+      (left.binding, right.binding) match {
+        //    PARENT MOD         CHILD MOD
+        case (PortBinding(_, _), PortBinding(_,_)) => issueAttach(left, Seq(right))
+        case (WireBinding(_), PortBinding(_,_)) => issueAttach(left, Seq(right))
+        case _ => throw UnknownRelationException
+      }
+    }
+    // CASE: Context is same module as right node and left node is in child module
+    else if ((rightMod == context_mod) &&
+             (leftMod._parent.map(_ == context_mod).getOrElse(false))) {
+      (left.binding, right.binding) match {
+        //    CHILD MOD          PARENT MOD
+        case (PortBinding(_, _), PortBinding(_,_)) => issueAttach(right, Seq(left))
+        case (PortBinding(_,_), WireBinding(_)) => issueAttach(right, Seq(left))
+        case _ => throw UnknownRelationException
+      }
+    }
+    // CASE: Context is same module that both left node and right node are in
+    // TODO This whole case doesn't really work in Firrtl
+    else if ((context_mod == leftMod) && (context_mod == rightMod)) {
+      (left.binding, right.binding) match {
+        //    CURRENT MOD        CURRENT MOD
+        case (PortBinding(_, _), PortBinding(_,_)) =>
+          //throwException("Attaching two analog ports of the same Module is not currently supported")
+          issueAttach(left, Seq(right))
+        case (WireBinding(_), PortBinding(_,_)) => issueAttach(left, Seq(right))
+        case (PortBinding(_,_), WireBinding(_)) => issueAttach(left, Seq(right))
+        case (WireBinding(_), WireBinding(_)) => issueAttach(left, Seq(right))
+        case _ => throw UnknownRelationException
+      }
+    }
+    // CASE: Context is the parent module of both the module containing left node
+    //                                        and the module containing right node
+    //   Note: This includes case when left and right in same module but in parent
+    else if ((leftMod._parent.map(_ == context_mod).getOrElse(false)) &&
+             (rightMod._parent.map(_ == context_mod).getOrElse(false))) {
+      (left.binding, right.binding) match {
+        //    CHILD MOD          CHILD MOD
+        case (PortBinding(_, _), PortBinding(_,_)) =>
+          val wire = Wire(left)
+          issueAttach(wire, Seq(left, right))
+        // If left and right are not ports, they must be some internal wire
+        case (_,_) => throw UnknownRelationException
+      }
+    }
     else throw UnknownRelationException
   }
 }
